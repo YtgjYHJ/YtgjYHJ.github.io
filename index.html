@@ -200,10 +200,11 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
     <button class="home" onclick="backToHome()">回到首页</button>
     <div class="optRow">
       <button id="singleHandBtn" onclick="toggleSingleHand()">单手模式：关</button>
-      <button id="swapHandsBtn" onclick="toggleSwapHands()">左右手交换：关</button>
+      <button id="swapHandsBtn" class="on" onclick="toggleSwapHands()">左右手交换：开</button>
       <button id="fpsBtn" class="on" onclick="toggleFps()">帧率显示：开</button>
       <button id="speedBtn" class="on" onclick="toggleSpeedBar()">速度条显示：开</button>
       <button id="keyBtn" onclick="toggleKeyMove()">键盘移动：关</button>
+      <button class="devSetBtn" onclick="openDevFromSettings()">开发者模式</button>
     </div>
   </div>
   <div id="powerOverlay">
@@ -214,7 +215,7 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
   <div id="devBadge">进入开发者模式</div>
   <div id="devOverlay">
     <h1>开发者模式</h1>
-    <p class="devTip" id="devErr">发现神秘金球！输入密码进入开发者模式</p>
+    <p class="devTip" id="devErr">输入密码进入开发者模式</p>
     <input id="devPass" type="password" inputmode="numeric" maxlength="6" placeholder="密码" autocomplete="off">
     <div id="devPassRow">
       <button class="resume" onclick="devConfirm()">确认</button>
@@ -230,8 +231,8 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
     </div>
   </div>
   <div id="start">
-    <h1>DIEP 双摇杆坦克</h1>
-    <div class="ver">V101</div>
+    <h1>MiniDiep</h1>
+    <div class="ver">V105</div>
     <div class="wm">制：<b>游条杆菌</b></div>
     <p>双摇杆操作：右下摇杆移动车身（带起步/刹停/转弯惯性）· 左下摇杆控制炮塔转向与开火<br>炮塔转动滞涩、开火有延迟，松手后停一秒再缓慢回正车身方向<br>打方块/三角/五边形升级加点，15级和30级可进化坦克<br>20级后出现Boss坦克，35级兵巢登场，击败得大量经验</p>
     <button onclick="startGame()">开始游戏</button>
@@ -272,11 +273,10 @@ resize();window.addEventListener("resize",resize);
 let started=false;
 let paused=false; // 升级暂停
 const worldSize=3200;
-/* 开发者模式：地图左下角金球，触碰输入密码 666666 */
+/* 开发者模式：通过游戏设置面板触发，输入密码 666666 */
 let devMode=false; // 开发者模式标记
-let devLastTouch=0; // 金球触碰冷却时间戳（60 秒 CD）
+let dev45Pending=false; // 开发者选45级：待选完坦克定位后再按该定位升满级
 const DEV_PASS="666666"; // 开发者密码（固定）
-const devBall={x:worldSize*0.08,y:worldSize*0.92,r:18}; // 金球固定在地图左下角，不进小地图，常驻不消失
 let boundaryGlow=0; // 边界触碰发光强度 0~1
 let reviveCost=10000; // 首次复活所需分数，每次复活后翻倍
 let nests=[]; // 兵巢数组（35 级登场）
@@ -371,14 +371,21 @@ class Player{
   applyStats(){
     this.hpMax=100+this.statLv[0]*14;
     this.speed=4.2+this.statLv[3]*0.32;
-    this.fireRate=Math.max(1,12-this.statLv[2]*1.1);
+    this.fireRate=Math.max(1,16-this.statLv[2]*1); // 初始16帧一发，每升1级减1帧，15级满级=1帧
     this.regen=0.18+this.statLv[6]*0.14;
+  }
+  /* 开火延迟（帧）：按下炮塔摇杆后延迟开火。默认1秒；射速10级0.7秒、13级0.4秒、15级0.1秒 */
+  aimDelay(){
+    const s=this.statLv[2];
+    if(s>=15)return 6;   // 0.1秒
+    if(s>=13)return 24;  // 0.4秒
+    if(s>=10)return 42;  // 0.7秒
+    return 60;           // 1秒
   }
   getDamage(){return 18+this.statLv[1]*4.5}
   getBulletSpeed(){return 7.2+this.statLv[5]*1.1}
   getFov(){return Math.min(2.0,1+this.statLv[7]*0.07)} // 上限2.0，15级满级仍生效
   update(){
-    this.applyStats();
     this.hp=Math.min(this.hpMax,this.hp+this.regen);
     this.fireTimer--;
     /* 车身建模：右下摇杆控制移动；惯性随速度动态变化——速度越大，刹停越滑、转弯越迟钝 */
@@ -410,7 +417,7 @@ class Player{
     if(aimTouch.active){
       const len=Math.hypot(aimTouch.x,aimTouch.y);
       if(len>0.15){
-        if(!this.aimWasOn){this.aimFireWait=60;this.aimWasOn=true;} // 刚按下操控：先停 1 秒再开火
+        if(!this.aimWasOn){this.aimFireWait=this.aimDelay();this.aimWasOn=true;} // 刚按下操控：按射速等级开火延迟
         this.angle=anglerp(this.angle,Math.atan2(aimTouch.y,aimTouch.x),0.05); // 滞涩感更强（转向更迟钝）
         if(this.aimFireWait>0)this.aimFireWait--; // 开火延迟倒计时
         else if(this.fireTimer<=0){this.shoot();this.fireTimer=this.fireRate;}
@@ -457,6 +464,7 @@ class Player{
     while(this.exp>=expNeed(this.level)&&this.level<45){
       this.exp-=expNeed(this.level);this.level++;this.mass=1+(this.level-1)*0.1+this.massBonus+(this.massTier===2?0.1:0);this.points+=3;leveled=true;
     }
+    if(leveled)this.applyStats(); // 升级后重算属性（原每帧调用，现只在变化时）
     while((oweSmoke>0||oweRefill>0)&&this.points>0){this.points--;if(oweSmoke>0)oweSmoke--;else oweRefill--;} // 升级获得点数：自动偿还存点欠账
     updateHud();
     if(leveled&&this.points>0){
@@ -603,32 +611,45 @@ const powerSteps=[
   {lv:33,full:"Boss 强化：四级子弹速度、五级回血、7 秒生成、场上上限提升到 5（达上限后刷新倒计时显示已达上限）"},
   {lv:35,full:"兵巢登场：生成深红巨型兵巢（血量约 Boss 的 5 倍，不可移动/攻击，场上至少会有一个），携带 5 个 AI 守卫；之后每 20 秒 +1，兵巢每 3 秒产出 1 个普通 AI（不占场上上限）"}
 ];
+/* HUD 脏检查缓存：数值没变就不碰 DOM，避免每帧重排 */
+const hudCache={lv:-1,hpPct:-1,hue:-1,hpTxt:"",sc:"",exp:"",pts:-1,power:-1,vPct:-1};
+const TIER_NAMES={1:"轻坦",2:"中坦",3:"重坦"};
 function updateHud(){
-  levelInfo.textContent="Lv."+player.level;
-  updateSmokeBtn(); // 烟雾弹按钮锁定/发数状态
+  const c=hudCache;
+  if(c.lv!==player.level){c.lv=player.level;levelInfo.textContent="Lv."+player.level;}
+  updateSmokeBtn(); // 内部自带脏检查
   const hpPct=Math.max(0,Math.min(100,player.hp/player.hpMax*100));
-  const hue=Math.max(0,Math.round(hpPct*1.2)); // 0红 → 60黄 → 120绿，随血量连续变化
-  document.getElementById("hpBar").style.background="linear-gradient(90deg,hsl("+hue+",72%,52%),hsl("+hue+",85%,45%))";
-  document.getElementById("hpBar").style.width=hpPct+"%";
-  document.getElementById("hpText").textContent=Math.round(player.hp)+"/"+Math.round(player.hpMax);
-  const tierNames={1:"轻坦",2:"中坦",3:"重坦"};
-  document.getElementById("scoreInfo").innerHTML="分数: "+player.score+" <span style='color:#bdb76b'>质量 "+player.mass.toFixed(1)+(player.massTier>0?"（"+tierNames[player.massTier]+"）":"")+"</span>";
-  const need=expNeed(player.level);
-  if(player.level>=45){
-    // 满级后：取消原满级显示，经验条上限固定 1 万，经验照常显示
-    document.getElementById("expBar").style.width=Math.min(100,player.exp/10000*100)+"%";
-    document.getElementById("expText").textContent=Math.floor(player.exp)+"/10000";
-  }else{
-    document.getElementById("expBar").style.width=Math.min(100,player.exp/need*100)+"%";
-    document.getElementById("expText").textContent=Math.floor(player.exp)+"/"+need;
+  const hue=Math.max(0,Math.round(hpPct*1.2));
+  if(c.hpPct!==Math.round(hpPct)||c.hue!==hue){
+    c.hpPct=Math.round(hpPct);c.hue=hue;
+    const hb=document.getElementById("hpBar");
+    hb.style.background="linear-gradient(90deg,hsl("+hue+",72%,52%),hsl("+hue+",85%,45%))";
+    hb.style.width=hpPct+"%";
   }
-  ptsInfo.textContent=player.points>0?"升级点数: "+player.points:"";
-  /* 强度进度条：整体颜色随等级变化——低等级绿 → 高等级红 */
+  const hpTxt=Math.round(player.hp)+"/"+Math.round(player.hpMax);
+  if(c.hpTxt!==hpTxt){c.hpTxt=hpTxt;document.getElementById("hpText").textContent=hpTxt;}
+  const sc=player.score+"|"+player.mass.toFixed(1)+"|"+player.massTier;
+  if(c.sc!==sc){
+    c.sc=sc;
+    document.getElementById("scoreInfo").innerHTML="分数: "+player.score+" <span style='color:#bdb76b'>质量 "+player.mass.toFixed(1)+(player.massTier>0?"（"+TIER_NAMES[player.massTier]+"）":"")+"</span>";
+  }
+  const need=expNeed(player.level);
+  const expPct=player.level>=45?Math.min(100,player.exp/10000*100):Math.min(100,player.exp/need*100);
+  const expTxt=player.level>=45?Math.floor(player.exp)+"/10000":Math.floor(player.exp)+"/"+need;
+  if(c.exp!==expTxt){
+    c.exp=expTxt;
+    document.getElementById("expBar").style.width=expPct+"%";
+    document.getElementById("expText").textContent=expTxt;
+  }
+  if(c.pts!==player.points){c.pts=player.points;ptsInfo.textContent=player.points>0?"升级点数: "+player.points:"";}
   const pct=Math.min(100,player.level/45*100);
-  const hue3=Math.max(0,120-Math.round(pct*1.2)); // 120绿 → 60黄 → 0红
-  document.getElementById("powerFill").style.background="linear-gradient(90deg,hsl("+hue3+",70%,50%),hsl("+hue3+",85%,45%))";
-  document.getElementById("powerFill").style.width=pct+"%";
-  document.getElementById("powerMarker").style.left=pct+"%";
+  if(c.power!==pct){
+    c.power=pct;
+    const hue3=Math.max(0,120-Math.round(pct*1.2)); // 120绿 → 60黄 → 0红
+    document.getElementById("powerFill").style.background="linear-gradient(90deg,hsl("+hue3+",70%,50%),hsl("+hue3+",85%,45%))";
+    document.getElementById("powerFill").style.width=pct+"%";
+    document.getElementById("powerMarker").style.left=pct+"%";
+  }
 }
 /* 升级面板：右侧竖排展示；顺序为 坦克定位（20级优先）→ 坦克进化（15/30级次之）→ 加点（属性/烟雾升级/分数/补充）；
    点数点完后如有未选择/未跳过的进化，保留面板待选择，全部处理完才自动继续 */
@@ -638,6 +659,14 @@ function showUpgrade(){
   pts.className="ptsRow";
   pts.textContent=(supplyMode?"补给点数":"升级点数")+": "+player.points+" 点"; // 满级后弹出补给而非升级
   upgradeBar.appendChild(pts);
+  /* 45级且烟雾弹未满级（点数0）：面板保持打开，提供暂不升级的关闭按钮 */
+  if(player.level>=45&&smokeLv<5&&player.points===0){
+    const closeB=document.createElement("button");
+    closeB.className="upBtn skipBtn";
+    closeB.textContent="暂不升级烟雾弹（关闭）";
+    closeB.onclick=()=>{paused=false;supplyMode=false;upgradeBar.style.display="none";};
+    upgradeBar.appendChild(closeB);
+  }
   /* 满级后补给面板：只显示 分数换点 + 补给烟雾弹 两个选项 */
   if(supplyMode){
     const sep=document.createElement("div");sep.className="upSep";upgradeBar.appendChild(sep);
@@ -667,7 +696,14 @@ function showUpgrade(){
     ];
     for(const o of opts){
       const bt=document.createElement("button");bt.className="upBtn classBtn";bt.textContent=o.name;
-      bt.onclick=()=>{player.massTier=o.ti;player.massBonus=o.bonus;player.mass=1+(player.level-1)*0.1+o.bonus+(o.ti===2?0.1:0);player.points+=o.pts;maybeCloseUpgrade();};
+      bt.onclick=()=>{player.massTier=o.ti;player.massBonus=o.bonus;player.mass=1+(player.level-1)*0.1+o.bonus+(o.ti===2?0.1:0);
+        if(dev45Pending){
+          dev45Pending=false;player.points=0; // 45级开发者：选定位后不加点数
+          for(let i=0;i<stats.length;i++)player.statLv[i]=maxStat(i); // 按所选定位上限升满级
+          smokeLv=5;smokeCount=smokeCapacity();updateSmokeBtn(); // 烟雾弹也升满（5级、满弹）
+          player.score+=600;player.applyStats();updateHud(); // 奖励600分
+        }else{player.points+=o.pts;}
+        maybeCloseUpgrade();};
       /* 长按 500ms 查看该定位详解；松手即消失 */
       const holdStart=()=>{clearTimeout(tierHold);tierHold=setTimeout(()=>{tierHold="done";showTierTip(o.ti);},500);};
       const holdEnd=()=>{if(tierHold==="done"){hideTierTip();tierHold=null;}else{clearTimeout(tierHold);tierHold=null;}};
@@ -757,6 +793,7 @@ function hasPendingEvo(){
 function maybeCloseUpgrade(){
   if(player.points>0){paused=true;showUpgrade();return;}
   if(hasPendingEvo()){paused=true;showUpgrade();return;}
+  if(player.level>=45&&smokeLv<5){paused=true;showUpgrade();return;} // 45级且烟雾弹未满级：保留面板可继续升级（赊欠）
   paused=false;
   supplyMode=false;
   upgradeBar.style.display="none";
@@ -765,6 +802,7 @@ function upg(i){
   const ul=stats[i].unlockLevel;
   if(player.points>0&&player.statLv[i]<maxStat(i)&&(ul===undefined||player.level>=ul)){
     player.statLv[i]++;player.points--;
+    player.applyStats(); // 属性变化时重算，避免每帧调用
     maybeCloseUpgrade();
     updateHud();
   }
@@ -777,14 +815,19 @@ function exchangeScore(){
     updateHud();
   }
 }
-/* 烟雾弹按钮状态：锁定显示25，解锁显示烟雾+发数角标 */
+/* 烟雾弹按钮状态：锁定显示25，解锁显示烟雾+发数角标（脏检查）；DOM 引用顶层缓存，避免每帧 getElementById */
+const smokeBtnCache={locked:null,count:null};
+const sbEl=document.getElementById("smokeBtn"),slEl=document.getElementById("smokeLbl"),snEl=document.getElementById("smokeNum");
 function updateSmokeBtn(){
-  const sb=document.getElementById("smokeBtn"),sl=document.getElementById("smokeLbl"),sn=document.getElementById("smokeNum");
+  const sb=sbEl,sl=slEl,sn=snEl;
   const locked=player.level<25;
-  sb.classList.toggle("locked",locked);
-  sl.textContent=locked?"25":"烟雾";
-  sn.textContent=smokeCount;
-  sn.style.display=locked?"none":"flex";
+  if(smokeBtnCache.locked!==locked){
+    smokeBtnCache.locked=locked;
+    sb.classList.toggle("locked",locked);
+    sl.textContent=locked?"25":"烟雾";
+    sn.style.display=locked?"none":"flex";
+  }
+  if(smokeBtnCache.count!==smokeCount){smokeBtnCache.count=smokeCount;sn.textContent=smokeCount;}
 }
 /* 烟雾弹：使用（25级解锁、有存货且未在生效） */
 function useSmoke(){
@@ -939,6 +982,15 @@ function closePowerInfo(){
   paused=false;
   document.getElementById("powerOverlay").style.display="none";
 }
+/* 设置面板触发开发者模式：打开密码弹窗 */
+function openDevFromSettings(){
+  document.getElementById("devErr").textContent="输入密码进入开发者模式";
+  document.getElementById("devPass").value="";
+  document.getElementById("devPass").style.display="";       // 恢复密码输入框
+  document.getElementById("devPassRow").style.display="";    // 恢复确认/取消按钮
+  document.getElementById("devLevelBox").style.display="none"; // 隐藏等级选择（重新输入密码后再进）
+  document.getElementById("devOverlay").style.display="flex";
+}
 /* 开发者模式：密码验证与进入 */
 let devBeforeLevel=1; // 进入开发者模式前的等级（用于扣除已获得的升级点数）
 function devConfirm(){
@@ -962,6 +1014,7 @@ function applyDevLevel(){
     return;
   }
   document.getElementById("devOverlay").style.display="none";
+  document.getElementById("pauseOverlay").style.display="none"; // 关闭设置面板（从设置进入时残留，避免点“继续游戏”绕过加点暂停）
   paused=false;
   devMode=true;
   player.tank=0;                          // 重置为普通坦克，进化由玩家按等级自选
@@ -969,6 +1022,11 @@ function applyDevLevel(){
   const earned=(devBeforeLevel-1)*3;      // 进入前等级已获得的升级点数
   const target=(v-1)*3;                   // 所选等级应有的总点数
   player.points=Math.max(0,target-earned);// 只补差额（目标低于进入前等级时不倒扣）
+  if(v===45){
+    dev45Pending=true; // 选45级：等玩家先选坦克定位，选完才按该定位上限升满级
+    player.points=0;   // 不加点数
+    smokeLv=5;smokeCount=smokeCapacity();oweSmoke=0;updateSmokeBtn(); // 烟雾弹直接满级（Lv.5、弹量拉满）
+  }
   player.applyStats();
   player.hp=player.hpMax;
   document.getElementById("devBadge").style.display="block"; // 顶部标识
@@ -982,7 +1040,8 @@ function applyDevLevel(){
 }
 function devCancel(){
   document.getElementById("devOverlay").style.display="none";
-  paused=false;
+  paused=true;
+  document.getElementById("pauseOverlay").style.display="flex"; // 取消则回到游戏设置面板（保持暂停）
 }
 function die(){
   addWreck(player.x,player.y,player.r,player.mass,player.angle,player.tank,false,player.vx,player.vy); // 玩家残骸（保留惯性）
@@ -1148,7 +1207,7 @@ function init(){
   player=new Player();shapes=[];bullets=[];enemies=[];nests=[];wrecks=[];
   nestStarted=false;nestTimer=0; // 兵巢生成节奏重置
   scorePopShown=false;document.getElementById("scorePop").classList.remove("show"); // 分数弹图重置
-  devMode=false; // 每局重置开发者状态（金球常驻）
+  devMode=false;dev45Pending=false; // 每局重置开发者状态
   for(let i=0;i<220;i++) shapes.push(new Shape());
   for(let i=0;i<10;i++) enemies.push(spawnEnemy());
 }
@@ -1416,22 +1475,6 @@ function loop(){
     const tL=player.x<=player.r+2, tR=player.x>=worldSize-player.r-2, tT=player.y<=player.r+2, tB=player.y>=worldSize-player.r-2;
     if(tL||tR||tT||tB)boundaryGlow=Math.min(1,boundaryGlow+0.15);
     else boundaryGlow=Math.max(0,boundaryGlow-0.04);
-    /* 开发者模式金球：常驻地图左下角，触碰后暂停并弹密码窗；内置 60 秒触碰 CD */
-    if(Math.hypot(player.x-devBall.x,player.y-devBall.y)<player.r+devBall.r){
-      const now=Date.now();
-      if(now-devLastTouch<60000){} // 60 秒冷却中：不触发
-      else{
-        devLastTouch=now;
-        paused=true;
-        touch.active=false;touch.x=0;touch.y=0;hideJoy();aimTouch.active=false;aimTouch.x=0;aimTouch.y=0;hideAimJoy();
-        document.getElementById("devErr").textContent="发现神秘金球！输入密码进入开发者模式";
-        document.getElementById("devPass").value="";
-        document.getElementById("devPass").style.display="";       // 恢复密码输入框
-        document.getElementById("devPassRow").style.display="";    // 恢复确认/取消按钮
-        document.getElementById("devLevelBox").style.display="none"; // 隐藏等级选择（重新输入密码后再进）
-        document.getElementById("devOverlay").style.display="flex";
-      }
-    }
     bullets.forEach(b=>b.update());
     bullets=bullets.filter(b=>b.life>0);
     enemies.forEach(e=>e.update());
@@ -1575,17 +1618,6 @@ function loop(){
     ctx.beginPath();ctx.arc(0,0,ex.r*scale,0,Math.PI*2);ctx.stroke();
     ctx.restore();
   }
-  /* 金色开发者球体（不显示在小地图上） */
-  /* 开发者金球：常驻显示（不消失），球心显示剩余冷却倒计时 */
-  const dgx=(devBall.x-camX)*scale+W/2, dgy=(devBall.y-camY)*scale+H/2;
-  ctx.fillStyle="#ffd700";
-  ctx.beginPath();ctx.arc(dgx,dgy,devBall.r*scale,0,Math.PI*2);ctx.fill();
-  const devRemain=60000-(Date.now()-devLastTouch);
-  if(devRemain>0){
-    ctx.fillStyle="#fff";ctx.font="bold "+Math.max(9,Math.min(16,11*scale))+"px sans-serif";
-    ctx.textAlign="center";ctx.textBaseline="middle";
-    ctx.fillText(Math.ceil(devRemain/1000)+"s",dgx,dgy);
-  }
   enemies.forEach(e=>e.draw(camX,camY,scale));
   nests.forEach(n=>drawNest(n,camX,camY,scale));
   bullets.forEach(b=>b.draw(camX,camY,scale));
@@ -1595,9 +1627,12 @@ function loop(){
   /* 提速杆：实时显示当前速度是极限速度的百分之几（0%~100%，蓝→绿随速度连续变色，同血条样式） */
   const vNow=Math.hypot(player.vx,player.vy);
   const vPct=Math.min(100,Math.round(vNow/(player.speed||1)*100));
-  speedFill.style.height=vPct+"%";
-  speedFill.style.background="hsl("+Math.round(210-vPct*0.9)+",80%,55%)"; // 静止蓝 → 满速绿
-  speedPct.textContent=vPct+"%";
+  if(hudCache.vPct!==vPct){ // 脏检查：百分比没变就不碰 DOM（静止时不再每帧写入）
+    hudCache.vPct=vPct;
+    speedFill.style.height=vPct+"%";
+    speedFill.style.background="hsl("+Math.round(210-vPct*0.9)+",80%,55%)"; // 静止蓝 → 满速绿
+    speedPct.textContent=vPct+"%";
+  }
   drawMap();
 
   requestAnimationFrame(loop);
