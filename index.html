@@ -196,7 +196,6 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
   <div id="pauseOverlay">
     <h1>游戏设置</h1>
     <button class="resume" onclick="resumeGame()">继续游戏</button>
-    <button class="restart" onclick="startGame()">重新开始</button>
     <button class="home" onclick="backToHome()">回到首页</button>
     <div class="optRow">
       <button id="singleHandBtn" onclick="toggleSingleHand()">单手模式：关</button>
@@ -222,8 +221,8 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
       <button class="restart" onclick="devCancel()">取消</button>
     </div>
     <div id="devLevelBox" style="display:none">
-      <p class="devTip">选择等级（1~45）：获得对应等级的强度与升级点数，15/30 级可进化坦克</p>
-      <input id="devLevel" type="number" inputmode="numeric" min="1" max="45" placeholder="1-45" value="30">
+      <p class="devTip">选择等级（1~50）：获得对应等级的强度与升级点数，15/30 级可进化坦克</p>
+      <input id="devLevel" type="number" inputmode="numeric" min="1" max="50" placeholder="1-50" value="30">
       <div>
         <button class="resume" onclick="applyDevLevel()">确定</button>
         <button class="restart" onclick="devCancel()">退出</button>
@@ -232,11 +231,23 @@ html,body{width:100%;height:100%;background:#111;overflow:hidden;font-family:sys
   </div>
   <div id="start">
     <h1>MiniDiep</h1>
-    <div class="ver">V105</div>
+    <div class="ver">V108</div>
     <div class="wm">制：<b>游条杆菌</b></div>
     <p>双摇杆操作：右下摇杆移动车身（带起步/刹停/转弯惯性）· 左下摇杆控制炮塔转向与开火<br>炮塔转动滞涩、开火有延迟，松手后停一秒再缓慢回正车身方向<br>打方块/三角/五边形升级加点，15级和30级可进化坦克<br>20级后出现Boss坦克，35级兵巢登场，击败得大量经验</p>
-    <button onclick="startGame()">开始游戏</button>
+    <button onclick="openModeSelect()">开始游戏</button>
+    <button onclick="openLog()" style="background:#2e9e5b;margin-top:2px">更新日志</button>
     <div class="tip">手机横屏体验最佳 · 电脑上按住鼠标（右下=移动 / 左下=炮塔）即可操作</div>
+  </div>
+  <div id="modeOverlay" style="display:none;position:absolute;inset:0;background:rgba(6,10,20,0.95);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;pointer-events:auto">
+    <h1 style="color:#fff;font-size:22px;margin:0 0 8px;letter-spacing:2px">选择玩法</h1>
+    <button style="width:min(78vw,420px);padding:15px;font-size:17px;border:none;border-radius:10px;background:#4285F4;color:#fff;cursor:pointer" onclick="startGame()">经典模式</button>
+    <button disabled style="width:min(78vw,420px);padding:15px;font-size:17px;border:none;border-radius:10px;background:#2c3444;color:#7f8a9e;cursor:not-allowed">敬请期待</button>
+    <button style="margin-top:6px;padding:9px 26px;font-size:14px;border:1px solid #33415a;border-radius:9px;background:transparent;color:#8a93a5;cursor:pointer" onclick="closeModeSelect()">返回</button>
+  </div>
+  <div id="logOverlay" style="display:none;position:absolute;inset:0;background:rgba(6,10,20,0.97);z-index:210;flex-direction:column;padding:14px;pointer-events:auto">
+    <div style="color:#fff;font-size:19px;text-align:center;margin:6px 0 10px;letter-spacing:2px">更新日志</div>
+    <div id="logList" style="flex:1;overflow-y:auto;color:#c9d3e4;font-size:12.5px;line-height:1.6;padding:0 8px"></div>
+    <button style="margin-top:10px;padding:11px;border:none;border-radius:9px;background:#2c3444;color:#dfe6f2;font-size:15px;cursor:pointer" onclick="closeLog()">关闭</button>
   </div>
   <div id="over">
     <h1>坦克被摧毁</h1>
@@ -275,7 +286,7 @@ let paused=false; // 升级暂停
 const worldSize=3200;
 /* 开发者模式：通过游戏设置面板触发，输入密码 666666 */
 let devMode=false; // 开发者模式标记
-let dev45Pending=false; // 开发者选45级：待选完坦克定位后再按该定位升满级
+let dev45Pending=false; // 开发者选50级（满级）：待选完坦克定位后再按该定位升满级
 const DEV_PASS="666666"; // 开发者密码（固定）
 let boundaryGlow=0; // 边界触碰发光强度 0~1
 let reviveCost=10000; // 首次复活所需分数，每次复活后翻倍
@@ -290,7 +301,7 @@ let shapes=[];
 let bullets=[];
 let enemies=[];
 const expToLevel=[0,25,60,120,220,360,550,780,1050,1400,1800,2300,2900,3600,4400];
-/* 每级所需经验：数组覆盖 1-15 级，16 级以后按公式递增，保证可一直升到 45 级 */
+/* 每级所需经验：数组覆盖 1-15 级，16 级以后按公式递增，保证可一直升到 50 级 */
 function expNeed(lv){
   if(lv-1<expToLevel.length)return expToLevel[lv-1];
   return Math.floor(expToLevel[expToLevel.length-1]*(1+(lv-expToLevel.length)*0.18));
@@ -446,7 +457,7 @@ class Player{
     }
   }
   gainExp(v){
-    if(this.level>=45){
+    if(this.level>=50){
       this.exp=Math.min(10000,this.exp+v); // 满级后经验照常累积，经验条上限固定 1 万
       updateHud();
       if(this.exp>=10000){
@@ -461,7 +472,7 @@ class Player{
     }
     this.exp+=v;
     let leveled=false;
-    while(this.exp>=expNeed(this.level)&&this.level<45){
+    while(this.exp>=expNeed(this.level)&&this.level<50){
       this.exp-=expNeed(this.level);this.level++;this.mass=1+(this.level-1)*0.1+this.massBonus+(this.massTier===2?0.1:0);this.points+=3;leveled=true;
     }
     if(leveled)this.applyStats(); // 升级后重算属性（原每帧调用，现只在变化时）
@@ -609,7 +620,9 @@ const powerSteps=[
   {lv:25,full:"普通 AI 生成速率翻倍，场上上限 16→22"},
   {lv:30,full:"解锁 2阶进化（机枪/三向）；属性上限 10→15（按坦克定位差异化：轻坦 生命12/移速19/回血17，中坦 16/16/16，重坦 18/移速12/回血18）；烟雾弹升级解锁（满级5级：1级外圈半径300px、每级+50px，5级不增半径但+2槽位并白送2发）"},
   {lv:33,full:"Boss 强化：四级子弹速度、五级回血、7 秒生成、场上上限提升到 5（达上限后刷新倒计时显示已达上限）"},
-  {lv:35,full:"兵巢登场：生成深红巨型兵巢（血量约 Boss 的 5 倍，不可移动/攻击，场上至少会有一个），携带 5 个 AI 守卫；之后每 20 秒 +1，兵巢每 3 秒产出 1 个普通 AI（不占场上上限）"}
+  {lv:35,full:"兵巢登场：生成深红巨型兵巢（血量约 Boss 的 5 倍，不可移动/攻击，场上至少会有一个），携带 5 个 AI 守卫；之后每 20 秒 +1，兵巢每 3 秒产出 1 个普通 AI（不占场上上限）"},
+  {lv:40,full:"兵巢爆兵加速：40 级后每个兵巢每 1 秒产出 1 个 AI 坦克（40 级前每 3 秒 1 个）"},
+  {lv:50,full:"等级上限提升至 50 级（满级后经验条固定 1 万，经验照常累积并弹出补给）"}
 ];
 /* HUD 脏检查缓存：数值没变就不碰 DOM，避免每帧重排 */
 const hudCache={lv:-1,hpPct:-1,hue:-1,hpTxt:"",sc:"",exp:"",pts:-1,power:-1,vPct:-1};
@@ -634,15 +647,15 @@ function updateHud(){
     document.getElementById("scoreInfo").innerHTML="分数: "+player.score+" <span style='color:#bdb76b'>质量 "+player.mass.toFixed(1)+(player.massTier>0?"（"+TIER_NAMES[player.massTier]+"）":"")+"</span>";
   }
   const need=expNeed(player.level);
-  const expPct=player.level>=45?Math.min(100,player.exp/10000*100):Math.min(100,player.exp/need*100);
-  const expTxt=player.level>=45?Math.floor(player.exp)+"/10000":Math.floor(player.exp)+"/"+need;
+  const expPct=player.level>=50?Math.min(100,player.exp/10000*100):Math.min(100,player.exp/need*100);
+  const expTxt=player.level>=50?Math.floor(player.exp)+"/10000":Math.floor(player.exp)+"/"+need;
   if(c.exp!==expTxt){
     c.exp=expTxt;
     document.getElementById("expBar").style.width=expPct+"%";
     document.getElementById("expText").textContent=expTxt;
   }
   if(c.pts!==player.points){c.pts=player.points;ptsInfo.textContent=player.points>0?"升级点数: "+player.points:"";}
-  const pct=Math.min(100,player.level/45*100);
+  const pct=Math.min(100,player.level/50*100);
   if(c.power!==pct){
     c.power=pct;
     const hue3=Math.max(0,120-Math.round(pct*1.2)); // 120绿 → 60黄 → 0红
@@ -659,8 +672,8 @@ function showUpgrade(){
   pts.className="ptsRow";
   pts.textContent=(supplyMode?"补给点数":"升级点数")+": "+player.points+" 点"; // 满级后弹出补给而非升级
   upgradeBar.appendChild(pts);
-  /* 45级且烟雾弹未满级（点数0）：面板保持打开，提供暂不升级的关闭按钮 */
-  if(player.level>=45&&smokeLv<5&&player.points===0){
+  /* 50级且烟雾弹未满级（点数0）：面板保持打开，提供暂不升级的关闭按钮 */
+  if(player.level>=50&&smokeLv<5&&player.points===0){
     const closeB=document.createElement("button");
     closeB.className="upBtn skipBtn";
     closeB.textContent="暂不升级烟雾弹（关闭）";
@@ -698,7 +711,7 @@ function showUpgrade(){
       const bt=document.createElement("button");bt.className="upBtn classBtn";bt.textContent=o.name;
       bt.onclick=()=>{player.massTier=o.ti;player.massBonus=o.bonus;player.mass=1+(player.level-1)*0.1+o.bonus+(o.ti===2?0.1:0);
         if(dev45Pending){
-          dev45Pending=false;player.points=0; // 45级开发者：选定位后不加点数
+          dev45Pending=false;player.points=0; // 50级开发者：选定位后不加点数
           for(let i=0;i<stats.length;i++)player.statLv[i]=maxStat(i); // 按所选定位上限升满级
           smokeLv=5;smokeCount=smokeCapacity();updateSmokeBtn(); // 烟雾弹也升满（5级、满弹）
           player.score+=600;player.applyStats();updateHud(); // 奖励600分
@@ -793,7 +806,7 @@ function hasPendingEvo(){
 function maybeCloseUpgrade(){
   if(player.points>0){paused=true;showUpgrade();return;}
   if(hasPendingEvo()){paused=true;showUpgrade();return;}
-  if(player.level>=45&&smokeLv<5){paused=true;showUpgrade();return;} // 45级且烟雾弹未满级：保留面板可继续升级（赊欠）
+  if(player.level>=50&&smokeLv<5){paused=true;showUpgrade();return;} // 50级且烟雾弹未满级：保留面板可继续升级（赊欠）
   paused=false;
   supplyMode=false;
   upgradeBar.style.display="none";
@@ -900,7 +913,90 @@ function drawSmoke(camX,camY,scale){
   ctx.stroke();
   ctx.restore();
 }
+const CHANGELOG=[
+{v:40,t:"边界蓝色光晕：触碰边界向外扩散 30px 半圆淡蓝光"},
+{v:41,t:"主页水印「制：游条杆菌」（后 4 字颜色左→右流动）；机枪随机弹道 ±5°"},
+{v:42,t:"35 级兵巢登场：深红巨球、5 个 AI 守卫、每 20 秒 +1"},
+{v:43,t:"兵巢 5 个守卫均匀分布在 75px 处"},
+{v:44,t:"开发者模式支持自选等级（获得对应强度与点数）"},
+{v:45,t:"开发者模式扣除进入前已获得的点数"},
+{v:46,t:"1 升级点 = 100 分"},
+{v:47,t:"小地图下方新增游玩计时器"},
+{v:48,t:"兵巢固定每 20 秒刷新（不因被摧毁重置）"},
+{v:49,t:"场上至少保持 1 个兵巢"},
+{v:50,t:"Boss / 兵巢刷新倒计时（未解锁显示等级）"},
+{v:51,t:"开发者密码改回 666666"},
+{v:52,t:"所有坦克增加长方形车身，炮塔改为 10px"},
+{v:53,t:"开发者金球 5 秒 CD，中心显示倒计时"},
+{v:54,t:"炮塔尺寸不再随视野变大"},
+{v:55,t:"炮塔随视野等比缩小"},
+{v:56,t:"炮塔基础尺寸放大（打包）"},
+{v:57,t:"金球 CD 改为 60 秒并显示中心倒计时"},
+{v:58,t:"摇杆左移 / 上移 20px"},
+{v:59,t:"炮塔与车身双摇杆分离（左下炮塔 转向+开火）"},
+{v:60,t:"炮塔与车身拆成两个独立建模"},
+{v:61,t:"重新建模，修复移动平移感"},
+{v:62,t:"文件统一命名 MiniDiep+版本号"},
+{v:63,t:"射速下限调整"},
+{v:64,t:"射速下限降到 1 帧"},
+{v:65,t:"子弹碰到边界消失"},
+{v:66,t:"左下角显示帧率 + 炮塔平滑转向"},
+{v:67,t:"不手动时炮塔实时跟进车头方向"},
+{v:68,t:"起步 / 刹停惯性（玩家与 AI）"},
+{v:69,t:"FPS 去掉括号 + 惯性加大 + 转弯延迟"},
+{v:70,t:"炮塔回正更慢、转向滞涩、开火与回正各停 1 秒"},
+{v:71,t:"初始界面介绍更新 + 惯性加大"},
+{v:72,t:"惯性随速度增大（非固定值）"},
+{v:73,t:"设置新增单手模式 / 左右手交换"},
+{v:74,t:"单手模式摇杆不跟随、重开复位"},
+{v:75,t:"单手模式摇杆固定原位"},
+{v:76,t:"右侧提速杆（1%~100%）+ 单手模式炮塔摇杆透明"},
+{v:77,t:"速度条蓝绿渐变、静止显示 0%"},
+{v:78,t:"暂停改为游戏设置、初始界面可开、优先级最高"},
+{v:79,t:"设置跨局保留（不关网页）"},
+{v:80,t:"设置新增「回到首页」、帧率 / 速度条开关"},
+{v:81,t:"修复加点时进设置退出不暂停"},
+{v:82,t:"玩家 / AI / 兵巢碰撞体积与推动、AI 不再互伤"},
+{v:83,t:"质量系统（玩家 1 + 0.1/级、AI 1、Boss 2；惯性乘质量；土黄显示）"},
+{v:84,t:"炮塔转向更迟钝 + WASD 键盘移动（设置开关）"},
+{v:85,t:"20 级坦克定位：轻 / 中 / 重坦"},
+{v:86,t:"30 级属性上限按定位差异化"},
+{v:87,t:"定位按钮只显示选项名"},
+{v:88,t:"三定位性能调整（各额外 +2 点）"},
+{v:89,t:"烟雾弹：25 级解锁、3 发、2 点补 1 发、环形失能 AI"},
+{v:90,t:"烟雾弹按钮位置 / 大小调整 + 解锁提示修复"},
+{v:91,t:"AI 失能保留惯性 + 烟雾环形状修复"},
+{v:92,t:"Boss 达上限显示已达上限 + 强度条更新"},
+{v:93,t:"强度条补充坦克定位信息"},
+{v:94,t:"烟雾弹升级（30 级、满 5 级、半径 300+50/级、5 级 +2 槽白送 2 发）"},
+{v:95,t:"隐形坦克：小地图不显示、半透明、2 倍速度、免疫首次伤害后显型、1.5 倍经验分数"},
+{v:96,t:"残骸系统：任意坦克 / 兵巢被击败留灰色残骸、1 万血、无分数经验"},
+{v:97,t:"残骸真实体积 / 无上限 / 保留惯性、每帧掉 1 血、默认左右手交换"},
+{v:98,t:"修复残骸互相纠缠与撞开回弹"},
+{v:99,t:"满级烟雾按钮绿色、存点赊欠、满级经验固定 1 万转补给、键盘移动车身摇杆跟随"},
+{v:100,t:"补给烟雾弹（满级补给面板只留分数换点/补给）、2 点可赊"},
+{v:101,t:"残骸被击毁 50% 爆炸（150px / 100 伤害、白黄橙红圆环）"},
+{v:102,t:"开发者模式改为设置触发（密码 666666、选 45 级全满 +600）"},
+{v:103,t:"开发者选 45 级先选定位再按定位满级、不加点"},
+{v:104,t:"性能优化：HUD / 属性计算脏检查、速度条缓存"},
+{v:105,t:"射速 16 帧起、每级 -1；开火延迟分级 1s / 0.7 / 0.4 / 0.1"},
+{v:106,t:"等级上限提升到 50、强度条同步"},
+{v:107,t:"40 级后兵巢爆兵 1 秒 1 个（兵巢生成仍 20 秒）"}
+];
+function openModeSelect(){document.getElementById("modeOverlay").style.display="flex";}
+function closeModeSelect(){document.getElementById("modeOverlay").style.display="none";}
+function openLog(){
+  const el=document.getElementById("logList");
+  if(!el.dataset.built){
+    el.innerHTML=CHANGELOG.map(x=>'<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b style="color:#7fb2ff">V'+x.v+'</b>　'+x.t+'</div>').join("");
+    el.dataset.built="1";
+  }
+  document.getElementById("logOverlay").style.display="flex";
+}
+function closeLog(){document.getElementById("logOverlay").style.display="none";}
 function startGame(){
+  document.getElementById("modeOverlay").style.display="none";
+  document.getElementById("logOverlay").style.display="none";
   document.getElementById("start").style.display="none";
   document.getElementById("over").style.display="none";
   document.getElementById("pauseOverlay").style.display="none";
@@ -1000,7 +1096,7 @@ function devConfirm(){
     return;
   }
   devBeforeLevel=player.level; // 记录进入前的等级
-  document.getElementById("devErr").textContent="密码正确，请选择等级（1~45）";
+  document.getElementById("devErr").textContent="密码正确，请选择等级（1~50）";
   document.getElementById("devPass").style.display="none";
   document.getElementById("devPassRow").style.display="none";
   document.getElementById("devLevelBox").style.display="block";
@@ -1009,8 +1105,8 @@ function devConfirm(){
    点数 = 目标等级累计应有 − 进入前等级累计已有，只补差额，避免额外点数 */
 function applyDevLevel(){
   const v=parseInt(document.getElementById("devLevel").value)||0;
-  if(v<1||v>45){
-    document.getElementById("devErr").textContent="请输入 1~45 的等级";
+  if(v<1||v>50){
+    document.getElementById("devErr").textContent="请输入 1~50 的等级";
     return;
   }
   document.getElementById("devOverlay").style.display="none";
@@ -1022,8 +1118,8 @@ function applyDevLevel(){
   const earned=(devBeforeLevel-1)*3;      // 进入前等级已获得的升级点数
   const target=(v-1)*3;                   // 所选等级应有的总点数
   player.points=Math.max(0,target-earned);// 只补差额（目标低于进入前等级时不倒扣）
-  if(v===45){
-    dev45Pending=true; // 选45级：等玩家先选坦克定位，选完才按该定位上限升满级
+  if(v===50){
+    dev45Pending=true; // 选50级：等玩家先选坦克定位，选完才按该定位上限升满级
     player.points=0;   // 不加点数
     smokeLv=5;smokeCount=smokeCapacity();oweSmoke=0;updateSmokeBtn(); // 烟雾弹直接满级（Lv.5、弹量拉满）
   }
@@ -1205,7 +1301,7 @@ function spawnNestAI(n){
 }
 function init(){
   player=new Player();shapes=[];bullets=[];enemies=[];nests=[];wrecks=[];
-  nestStarted=false;nestTimer=0; // 兵巢生成节奏重置
+  nestStarted=false;nestTimer=0;nestAIAcc=0; // 兵巢生成/爆兵节奏重置
   scorePopShown=false;document.getElementById("scorePop").classList.remove("show"); // 分数弹图重置
   devMode=false;dev45Pending=false; // 每局重置开发者状态
   for(let i=0;i<220;i++) shapes.push(new Shape());
@@ -1507,7 +1603,7 @@ function loop(){
           if(s.hp<=0){
             if(b.owner===player)player.gainExp(s.exp);
             shapes.splice(si,1);
-            if(shapes.length<200&&player.level<45)shapes.push(new Shape()); // 满级后暂停形状生成
+            if(shapes.length<200&&player.level<50)shapes.push(new Shape()); // 满级后暂停形状生成
           }
           if(b.pierced>b.pen)done=true; // 穿透次数用尽才消失
           break;
@@ -1759,7 +1855,7 @@ setInterval(()=>{
     }else{
       nestTimer+=1000;
       let spawned=false;
-      if(nestTimer>=20000){
+      if(nestTimer>=20000){ // 兵巢生成本身固定每 20 秒 +1
         nestTimer=0;
         spawnNest();
         spawned=true;
@@ -1769,12 +1865,17 @@ setInterval(()=>{
   }
 },1000);
 /* 兵巢产出：每个兵巢每 3 秒生成 1 个普通 AI（不占用普通 AI 上限） */
+let nestAIAcc=0;
 setInterval(()=>{
   if(!started||paused||!player)return;
-  if(player.level>=35){
+  if(player.level<35)return;
+  if(player.level>=40){ // 40级后爆兵加速：每 1 秒每个兵巢产出 1 个 AI（兵巢自身生成仍为每 20 秒）
     for(const n of nests)spawnNestAI(n);
+  }else{ // 40级前：每 3 秒产出 1 个
+    nestAIAcc+=1000;
+    if(nestAIAcc>=3000){nestAIAcc=0;for(const n of nests)spawnNestAI(n);}
   }
-},3000);
+},1000);
 /* 游玩计时：仅在实际游玩时累加（暂停/死亡不计时，复活续计）；同时刷新 Boss/兵巢倒计时 */
 setInterval(()=>{
   if(started&&!paused){playTime++;updateTimer();}
